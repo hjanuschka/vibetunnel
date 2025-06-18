@@ -130,9 +130,10 @@ export class SessionCreateForm extends LitElement {
 
     this.isCreating = true;
 
-    // Calculate reasonable terminal dimensions based on viewport
-    const terminalWidth = Math.max(80, Math.min(120, Math.floor((window.innerWidth - 400) / 8)));
-    const terminalHeight = Math.max(24, Math.min(40, Math.floor((window.innerHeight - 300) / 20)));
+    // Use conservative defaults that work well across devices
+    // The terminal will auto-resize to fit the actual container after creation
+    const terminalWidth = 120;
+    const terminalHeight = 30;
 
     const sessionData: SessionCreateData = {
       command: this.parseCommand(this.command.trim()),

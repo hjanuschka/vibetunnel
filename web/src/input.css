@@ -14,10 +14,27 @@
   font-variation-settings: 'wght' 400;
 }
 
-/* Override Tailwind's font-mono to use Fira Code */
+/* Hack Nerd Font */
+@font-face {
+  font-family: 'Hack Nerd Font Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/HackNerdFontMono-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Hack Nerd Font Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/HackNerdFontMono-Bold.ttf') format('truetype');
+}
+
+/* Override Tailwind's font-mono to use Hack Nerd Font */
 .font-mono {
   font-family:
-    'Fira Code', ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo,
+    'Hack Nerd Font Mono', 'Fira Code', ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo,
     monospace !important;
 }
 
@@ -81,7 +98,7 @@ body {
 .xterm {
   padding: 0 !important;
   font-family:
-    'Fira Code', ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo,
+    'Hack Nerd Font Mono', 'Fira Code', ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo,
     monospace !important;
 }
 

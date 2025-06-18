@@ -39,7 +39,6 @@ export class Terminal extends LitElement {
   @state() private actualRows = 24; // Rows that fit in viewport
 
   private container: HTMLElement | null = null;
-  private resizeObserver: ResizeObserver | null = null;
   private resizeTimeout: NodeJS.Timeout | null = null;
 
   // Virtual scrolling optimization
@@ -102,10 +101,7 @@ export class Terminal extends LitElement {
       this.momentumAnimation = null;
     }
 
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-      this.resizeObserver = null;
-    }
+    // ResizeObserver cleanup removed - we only use window resize events now
     if (this.terminal) {
       this.terminal.dispose();
       this.terminal = null;
@@ -214,7 +210,7 @@ export class Terminal extends LitElement {
     measureEl.style.top = '0';
     measureEl.style.left = '0';
     measureEl.style.fontSize = `${this.fontSize}px`;
-    measureEl.style.fontFamily = 'Fira Code, monospace';
+    measureEl.style.fontFamily = 'Hack Nerd Font Mono, Fira Code, monospace';
 
     // Use a mix of characters that represent typical terminal content
     const testString =
@@ -268,7 +264,7 @@ export class Terminal extends LitElement {
       // Resize the terminal to the new dimensions
       if (this.terminal) {
         this.terminal.resize(this.cols, this.rows);
-        
+
         // Dispatch resize event for backend synchronization
         this.dispatchEvent(
           new CustomEvent('terminal-resize', {
@@ -278,12 +274,39 @@ export class Terminal extends LitElement {
         );
       }
     } else {
-      // Normal mode: just calculate how many rows fit in the viewport
+      // Normal mode: calculate both cols and rows based on container size
+      const containerWidth = this.container.clientWidth;
       const containerHeight = this.container.clientHeight;
       const lineHeight = this.fontSize * 1.2;
-      const newActualRows = Math.max(1, Math.floor(containerHeight / lineHeight));
-
-      this.actualRows = newActualRows;
+      const charWidth = this.measureCharacterWidth();
+      
+      const newCols = Math.max(20, Math.floor(containerWidth / charWidth));
+      const newRows = Math.max(6, Math.floor(containerHeight / lineHeight));
+      
+      // Update logical dimensions if they changed significantly
+      const colsChanged = Math.abs(newCols - this.cols) > 3;
+      const rowsChanged = Math.abs(newRows - this.rows) > 2;
+      
+      if (colsChanged || rowsChanged) {
+        this.cols = newCols;
+        this.rows = newRows;
+        this.actualRows = newRows;
+        
+        // Resize the terminal to the new dimensions
+        if (this.terminal) {
+          this.terminal.resize(this.cols, this.rows);
+          
+          // Dispatch resize event for backend synchronization
+          this.dispatchEvent(
+            new CustomEvent('terminal-resize', {
+              detail: { cols: this.cols, rows: this.rows },
+              bubbles: true,
+            })
+          );
+        }
+      } else {
+        this.actualRows = newRows;
+      }
     }
 
     // Recalculate viewportY based on new lineHeight and actualRows
@@ -311,19 +334,23 @@ export class Terminal extends LitElement {
   private setupResize() {
     if (!this.container) return;
 
-    this.resizeObserver = new ResizeObserver(() => {
-      if (this.resizeTimeout) {
-        clearTimeout(this.resizeTimeout);
-      }
-      this.resizeTimeout = setTimeout(() => {
-        this.fitTerminal();
-      }, 50);
-    });
-    this.resizeObserver.observe(this.container);
-
+    // Only listen to window resize events to avoid pixel-level jitter
+    // Use debounced handling to prevent resize spam
+    let windowResizeTimeout: number | null = null;
+    
     window.addEventListener('resize', () => {
-      this.fitTerminal();
+      if (windowResizeTimeout) {
+        clearTimeout(windowResizeTimeout);
+      }
+      windowResizeTimeout = setTimeout(() => {
+        this.fitTerminal();
+      }, 150); // Debounce window resize events
     });
+
+    // Do an initial fit when the terminal is first set up
+    setTimeout(() => {
+      this.fitTerminal();
+    }, 100);
   }
 
   private setupScrolling() {
