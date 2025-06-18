@@ -204,7 +204,7 @@ func (s *Session) sendInput(data []byte) error {
 	// Open pipe if not already open
 	if s.stdinPipe == nil {
 		stdinPath := s.StdinPath()
-		pipe, err := os.OpenFile(stdinPath, os.O_WRONLY|os.O_NONBLOCK, 0)
+		pipe, err := os.OpenFile(stdinPath, os.O_WRONLY, 0)
 		if err != nil {
 			return fmt.Errorf("failed to open stdin pipe: %w", err)
 		}
