@@ -206,10 +206,12 @@ func (p *PTY) Run() error {
 					errCh <- fmt.Errorf("failed to write to PTY: %w", err)
 					return
 				}
+				// Continue immediately after successful write
+				continue
 			}
 			if err == syscall.EAGAIN {
-				// No data available, sleep briefly and try again
-				time.Sleep(1 * time.Millisecond)
+				// No data available, minimal sleep and try again
+				time.Sleep(100 * time.Microsecond)
 				continue
 			}
 			if err != nil && err != io.EOF {
@@ -218,8 +220,8 @@ func (p *PTY) Run() error {
 				return
 			}
 			if err == io.EOF {
-				// No writers to the FIFO yet, sleep longer and continue polling
-				time.Sleep(100 * time.Millisecond)
+				// No writers to the FIFO yet, reduced polling interval
+				time.Sleep(1 * time.Millisecond)
 				continue
 			}
 		}
