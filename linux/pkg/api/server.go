@@ -291,7 +291,11 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Session deleted successfully",
+	})
 }
 
 func (s *Server) handleCleanupSession(w http.ResponseWriter, r *http.Request) {
