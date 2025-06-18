@@ -28,7 +28,7 @@ func init() {
 	
 	compareCmd.Flags().IntVar(&goPort, "go-port", 4031, "Go server port")
 	compareCmd.Flags().IntVar(&rustPort, "rust-port", 4044, "Rust server port")
-	compareCmd.Flags().IntVarP(&runs, "runs", "r", 10, "Number of test runs (10-100)")
+	compareCmd.Flags().IntVarP(&runs, "runs", "r", 10, "Number of test runs (10-1000)")
 	compareCmd.Flags().StringVarP(&testType, "test", "t", "session", "Test type: session, stream, or both")
 }
 
@@ -46,8 +46,8 @@ type BenchmarkResult struct {
 }
 
 func runCompareBenchmark(cmd *cobra.Command, args []string) error {
-	if runs < 10 || runs > 100 {
-		return fmt.Errorf("runs must be between 10 and 100")
+	if runs < 10 || runs > 1000 {
+		return fmt.Errorf("runs must be between 10 and 1000")
 	}
 
 	fmt.Printf("🚀 VibeTunnel Server Comparison Benchmark\n")
