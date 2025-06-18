@@ -128,13 +128,13 @@ func benchmarkSingleStream(c *client.VibeTunnelClient, sessionNum int) *StreamRe
 	
 	// Create session
 	config := client.SessionConfig{
-		Name:   fmt.Sprintf("stream-bench-%d", sessionNum),
-		Args:   []string{"/bin/bash", "-i"},
-		Cwd:    "/tmp",
-		Width:  80,
-		Height: 24,
-		Term:   "xterm-256color",
-		Env:    map[string]string{"BENCH": "true"},
+		Name:       fmt.Sprintf("stream-bench-%d", sessionNum),
+		Command:    []string{"/bin/bash", "-i"},
+		WorkingDir: "/tmp",
+		Width:      80,
+		Height:     24,
+		Term:       "xterm-256color",
+		Env:        map[string]string{"BENCH": "true"},
 	}
 	
 	session, err := c.CreateSession(config)

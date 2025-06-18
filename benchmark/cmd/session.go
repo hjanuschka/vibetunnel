@@ -66,13 +66,13 @@ func benchmarkSessionLifecycle(c *client.VibeTunnelClient) error {
 	// 1. Create sessions
 	for i := 0; i < sessionCount; i++ {
 		config := client.SessionConfig{
-			Name:   fmt.Sprintf("bench-session-%d", i),
-			Args:   []string{sessionShell, "-i"},
-			Cwd:    sessionCwd,
-			Width:  sessionWidth,
-			Height: sessionHeight,
-			Term:   "xterm-256color",
-			Env:    map[string]string{"BENCH": "true"},
+			Name:       fmt.Sprintf("bench-session-%d", i),
+			Command:    []string{sessionShell, "-i"},
+			WorkingDir: sessionCwd,
+			Width:      sessionWidth,
+			Height:     sessionHeight,
+			Term:       "xterm-256color",
+			Env:        map[string]string{"BENCH": "true"},
 		}
 		
 		createStart := time.Now()

@@ -172,13 +172,13 @@ func createSessionWithTiming(c *client.VibeTunnelClient, userID int, stats *Load
 	atomic.AddInt64(&stats.TotalRequests, 1)
 	
 	config := client.SessionConfig{
-		Name:   fmt.Sprintf("load-user-%d-%d", userID, time.Now().Unix()),
-		Args:   []string{"/bin/bash", "-i"},
-		Cwd:    "/tmp",
-		Width:  80,
-		Height: 24,
-		Term:   "xterm-256color",
-		Env:    map[string]string{"LOAD_TEST": "true"},
+		Name:       fmt.Sprintf("load-user-%d-%d", userID, time.Now().Unix()),
+		Command:    []string{"/bin/bash", "-i"},
+		WorkingDir: "/tmp",
+		Width:      80,
+		Height:     24,
+		Term:       "xterm-256color",
+		Env:        map[string]string{"LOAD_TEST": "true"},
 	}
 	
 	session, err := c.CreateSession(config)

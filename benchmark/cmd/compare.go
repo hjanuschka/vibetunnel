@@ -133,14 +133,11 @@ func runSessionBenchmarkRuns(c *client.VibeTunnelClient, serverType string, numR
 		
 		runStart := time.Now()
 		
-		// Create session with compatibility for both servers
+		// Create session using unified API format
 		config := client.SessionConfig{
 			Name:       fmt.Sprintf("bench-run-%d", run),
-			Args:       []string{"/bin/bash", "-i"},
-			Cmdline:    []string{"/bin/bash", "-i"}, // Go server
-			Command:    []string{"/bin/bash", "-i"}, // Rust server
-			Cwd:        "/tmp",
-			WorkingDir: "/tmp", // Rust server
+			Command:    []string{"/bin/bash", "-i"},
+			WorkingDir: "/tmp",
 			Width:      80,
 			Height:     24,
 			Term:       "xterm-256color",
@@ -238,14 +235,11 @@ func runStreamBenchmarkRuns(c *client.VibeTunnelClient, serverType string, numRu
 		
 		runStart := time.Now()
 		
-		// Create session for streaming with compatibility for both servers
+		// Create session for streaming using unified API format
 		config := client.SessionConfig{
 			Name:       fmt.Sprintf("stream-run-%d", run),
-			Args:       []string{"/bin/bash", "-i"},
-			Cmdline:    []string{"/bin/bash", "-i"}, // Go server
-			Command:    []string{"/bin/bash", "-i"}, // Rust server
-			Cwd:        "/tmp",
-			WorkingDir: "/tmp", // Rust server
+			Command:    []string{"/bin/bash", "-i"},
+			WorkingDir: "/tmp",
 			Width:      80,
 			Height:     24,
 			Term:       "xterm-256color",
