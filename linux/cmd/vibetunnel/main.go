@@ -38,6 +38,15 @@ var (
 	password        string
 	passwordEnabled bool
 
+	// TLS/HTTPS flags (optional, defaults to HTTP like Rust version)
+	tlsEnabled      bool
+	tlsPort         string
+	tlsDomain       string
+	tlsSelfSigned   bool
+	tlsCertPath     string
+	tlsKeyPath      string
+	tlsAutoRedirect bool
+
 	// ngrok integration
 	ngrokEnabled bool
 	ngrokToken   string
@@ -89,6 +98,15 @@ func init() {
 	// Security flags (compatible with VibeTunnel dashboard settings)
 	rootCmd.Flags().StringVar(&password, "password", "", "Dashboard password for Basic Auth")
 	rootCmd.Flags().BoolVar(&passwordEnabled, "password-enabled", false, "Enable password protection")
+
+	// TLS/HTTPS flags (optional enhancement, defaults to HTTP like Rust version)
+	rootCmd.Flags().BoolVar(&tlsEnabled, "tls", false, "Enable HTTPS/TLS support")
+	rootCmd.Flags().StringVar(&tlsPort, "tls-port", "4443", "HTTPS port")
+	rootCmd.Flags().StringVar(&tlsDomain, "tls-domain", "", "Domain for Let's Encrypt (optional)")
+	rootCmd.Flags().BoolVar(&tlsSelfSigned, "tls-self-signed", true, "Use self-signed certificates (default)")
+	rootCmd.Flags().StringVar(&tlsCertPath, "tls-cert", "", "Custom TLS certificate path")
+	rootCmd.Flags().StringVar(&tlsKeyPath, "tls-key", "", "Custom TLS key path")
+	rootCmd.Flags().BoolVar(&tlsAutoRedirect, "tls-redirect", false, "Redirect HTTP to HTTPS")
 
 	// ngrok integration (compatible with VibeTunnel ngrok service)
 	rootCmd.Flags().BoolVar(&ngrokEnabled, "ngrok", false, "Enable ngrok tunnel")
@@ -270,7 +288,67 @@ func startServer(cfg *config.Config, manager *session.Manager) error {
 		}
 	}
 
-	// Print startup information
+	// Check if TLS is enabled
+	if tlsEnabled {
+		// Convert TLS port to int
+		tlsPortInt, err := strconv.Atoi(tlsPort)
+		if err != nil {
+			return fmt.Errorf("invalid TLS port: %w", err)
+		}
+
+		// Create TLS configuration
+		tlsConfig := &api.TLSConfig{
+			Enabled:      true,
+			Port:         tlsPortInt,
+			Domain:       tlsDomain,
+			SelfSigned:   tlsSelfSigned,
+			CertPath:     tlsCertPath,
+			KeyPath:      tlsKeyPath,
+			AutoRedirect: tlsAutoRedirect,
+		}
+
+		// Create TLS server
+		tlsServer := api.NewTLSServer(server, tlsConfig)
+		
+		// Print startup information for TLS
+		fmt.Printf("Starting VibeTunnel HTTPS server on %s:%s\n", bindAddress, tlsPort)
+		if tlsAutoRedirect {
+			fmt.Printf("HTTP redirect server on %s:%s -> HTTPS\n", bindAddress, port)
+		}
+		fmt.Printf("Serving web UI from: %s\n", staticPath)
+		fmt.Printf("Control directory: %s\n", controlPath)
+		
+		if tlsSelfSigned {
+			fmt.Printf("TLS: Using self-signed certificates for localhost\n")
+		} else if tlsDomain != "" {
+			fmt.Printf("TLS: Using Let's Encrypt for domain: %s\n", tlsDomain)
+		} else if tlsCertPath != "" && tlsKeyPath != "" {
+			fmt.Printf("TLS: Using custom certificates\n")
+		}
+		
+		if serverPassword != "" {
+			fmt.Printf("Basic auth enabled with username: admin\n")
+		}
+		
+		if ngrokURL != "" {
+			fmt.Printf("ngrok tunnel: %s\n", ngrokURL)
+		}
+		
+		if cfg.Advanced.DebugMode || debugMode {
+			fmt.Printf("Debug mode enabled\n")
+		}
+
+		// Start TLS server
+		httpAddr := ""
+		if tlsAutoRedirect {
+			httpAddr = fmt.Sprintf("%s:%s", bindAddress, port)
+		}
+		httpsAddr := fmt.Sprintf("%s:%s", bindAddress, tlsPort)
+		
+		return tlsServer.StartTLS(httpAddr, httpsAddr)
+	}
+
+	// Default HTTP behavior (like Rust version)
 	fmt.Printf("Starting VibeTunnel server on %s:%s\n", bindAddress, port)
 	fmt.Printf("Serving web UI from: %s\n", staticPath)
 	fmt.Printf("Control directory: %s\n", controlPath)

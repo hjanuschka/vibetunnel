@@ -33,6 +33,11 @@ func NewServer(manager *session.Manager, staticPath, password string, port int) 
 }
 
 func (s *Server) Start(addr string) error {
+	handler := s.createHandler()
+	return http.ListenAndServe(addr, handler)
+}
+
+func (s *Server) createHandler() http.Handler {
 	r := mux.NewRouter()
 
 	api := r.PathPrefix("/api").Subrouter()
@@ -63,7 +68,7 @@ func (s *Server) Start(addr string) error {
 		r.PathPrefix("/").Handler(http.FileServer(http.Dir(s.staticPath)))
 	}
 
-	return http.ListenAndServe(addr, r)
+	return r
 }
 
 func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
