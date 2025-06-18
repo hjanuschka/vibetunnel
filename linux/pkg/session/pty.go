@@ -172,25 +172,18 @@ func (p *PTY) Run() error {
 			}
 			if err != nil {
 				if err == io.EOF {
-					log.Printf("[DEBUG] PTY.Run: PTY reached EOF, checking if process is still alive...")
-					// Check if process is still alive before deciding what to do
-					if p.cmd.ProcessState == nil || !p.cmd.ProcessState.Exited() {
-						log.Printf("[DEBUG] PTY.Run: Process still running, continuing to read...")
-						time.Sleep(10 * time.Millisecond) // Reduced CPU usage from 1000 to 100 wake-ups/s
-						continue
-					} else {
-						log.Printf("[DEBUG] PTY.Run: Process has exited, stopping output reading")
-						return
-					}
+					// For blocking reads, EOF typically means the process exited
+					log.Printf("[DEBUG] PTY.Run: PTY reached EOF, process likely exited")
+					return
 				}
-				// For other errors, this might be a real problem
+				// For other errors, this is a problem
 				log.Printf("[ERROR] PTY.Run: OUTPUT GOROUTINE sending error to errCh: %v", err)
 				errCh <- fmt.Errorf("PTY read error: %w", err)
 				return
 			}
-			// If we get here, n == 0 and err == nil, which shouldn't happen with blocking reads
-			log.Printf("[DEBUG] PTY.Run: Got 0 bytes with no error, continuing...")
-			time.Sleep(10 * time.Millisecond) // Reduced CPU usage from 1000 to 100 wake-ups/s
+			// If we get here, n == 0 and err == nil, which is unusual for blocking reads
+			// Give a very brief pause to prevent tight loop
+			time.Sleep(1 * time.Millisecond)
 		}
 	}()
 
@@ -210,7 +203,7 @@ func (p *PTY) Run() error {
 				continue
 			}
 			if err == syscall.EAGAIN {
-				// No data available, minimal sleep and try again
+				// No data available, brief pause to prevent CPU spinning
 				time.Sleep(100 * time.Microsecond)
 				continue
 			}
@@ -220,8 +213,8 @@ func (p *PTY) Run() error {
 				return
 			}
 			if err == io.EOF {
-				// No writers to the FIFO yet, reduced polling interval
-				time.Sleep(1 * time.Millisecond)
+				// No writers to the FIFO yet, brief pause before retry
+				time.Sleep(500 * time.Microsecond) // Reduced from 1ms to balance responsiveness and CPU
 				continue
 			}
 		}

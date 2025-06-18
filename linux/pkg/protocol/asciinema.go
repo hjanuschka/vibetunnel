@@ -50,6 +50,8 @@ type StreamWriter struct {
 	buffer        []byte
 	lastWrite     time.Time
 	flushTimer    *time.Timer
+	syncTimer     *time.Timer
+	needsSync     bool
 }
 
 func NewStreamWriter(writer io.Writer, header *AsciinemaHeader) *StreamWriter {
@@ -131,10 +133,8 @@ func (w *StreamWriter) writeEvent(eventType EventType, data []byte) error {
 		return err
 	}
 	
-	// Sync file to ensure immediate fsnotify trigger
-	if file, ok := w.writer.(*os.File); ok {
-		file.Sync()
-	}
+	// Schedule sync instead of immediate sync for better performance
+	w.scheduleBatchSync()
 	
 	return nil
 }
@@ -166,13 +166,31 @@ func (w *StreamWriter) scheduleFlush() {
 		
 		fmt.Fprintf(w.writer, "%s\n", eventData)
 		
-		// Sync file to ensure immediate fsnotify trigger
-		if file, ok := w.writer.(*os.File); ok {
-			file.Sync()
-		}
+		// Schedule sync instead of immediate sync for better performance
+		w.scheduleBatchSync()
 		
 		// Clear buffer after flushing
 		w.buffer = w.buffer[:0]
+	})
+}
+
+// scheduleBatchSync batches sync operations to reduce I/O overhead
+func (w *StreamWriter) scheduleBatchSync() {
+	w.needsSync = true
+	
+	// Cancel existing sync timer if any
+	if w.syncTimer != nil {
+		w.syncTimer.Stop()
+	}
+	
+	// Schedule sync after 5ms to batch multiple writes
+	w.syncTimer = time.AfterFunc(5*time.Millisecond, func() {
+		if w.needsSync {
+			if file, ok := w.writer.(*os.File); ok {
+				file.Sync()
+			}
+			w.needsSync = false
+		}
 	})
 }
 
@@ -184,9 +202,12 @@ func (w *StreamWriter) Close() error {
 		return nil
 	}
 	
-	// Cancel flush timer
+	// Cancel timers
 	if w.flushTimer != nil {
 		w.flushTimer.Stop()
+	}
+	if w.syncTimer != nil {
+		w.syncTimer.Stop()
 	}
 
 	if len(w.buffer) > 0 {

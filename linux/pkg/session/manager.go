@@ -75,7 +75,7 @@ func (m *Manager) ListSessions() ([]*Info, error) {
 			continue
 		}
 
-		session.UpdateStatus()
+		// Return cached status for faster response - background updates will keep it current
 		sessions = append(sessions, session.info)
 	}
 

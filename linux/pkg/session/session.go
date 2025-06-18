@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -49,6 +50,8 @@ type Session struct {
 	controlPath string
 	info        *Info
 	pty         *PTY
+	stdinPipe   *os.File
+	stdinMutex  sync.Mutex
 }
 
 func newSession(controlPath string, config Config) (*Session, error) {
@@ -173,15 +176,8 @@ func (s *Session) Start() error {
 		}
 	}()
 	
-	// Give the process a moment to start, then verify it's running
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		if s.IsAlive() {
-			log.Printf("[DEBUG] Session %s: Process confirmed alive after 100ms", s.ID[:8])
-		} else {
-			log.Printf("[DEBUG] Session %s: Process appears dead after 100ms", s.ID[:8])
-		}
-	}()
+	// Process status will be checked on first access - no artificial delay needed
+	log.Printf("[DEBUG] Session %s: Started successfully", s.ID[:8])
 	
 	return nil
 }
@@ -202,15 +198,27 @@ func (s *Session) SendText(text string) error {
 }
 
 func (s *Session) sendInput(data []byte) error {
-	stdinPath := s.StdinPath()
-	pipe, err := os.OpenFile(stdinPath, os.O_WRONLY, 0)
-	if err != nil {
-		return fmt.Errorf("failed to open stdin pipe: %w", err)
-	}
-	defer pipe.Close()
+	s.stdinMutex.Lock()
+	defer s.stdinMutex.Unlock()
 
-	_, err = pipe.Write(data)
-	return err
+	// Open pipe if not already open
+	if s.stdinPipe == nil {
+		stdinPath := s.StdinPath()
+		pipe, err := os.OpenFile(stdinPath, os.O_WRONLY|os.O_NONBLOCK, 0)
+		if err != nil {
+			return fmt.Errorf("failed to open stdin pipe: %w", err)
+		}
+		s.stdinPipe = pipe
+	}
+
+	_, err := s.stdinPipe.Write(data)
+	if err != nil {
+		// If write fails, close and reset the pipe for next attempt
+		s.stdinPipe.Close()
+		s.stdinPipe = nil
+		return fmt.Errorf("failed to write to stdin pipe: %w", err)
+	}
+	return nil
 }
 
 func (s *Session) Signal(sig string) error {
@@ -238,7 +246,19 @@ func (s *Session) Stop() error {
 }
 
 func (s *Session) Kill() error {
-	return s.Signal("SIGKILL")
+	err := s.Signal("SIGKILL")
+	s.cleanup()
+	return err
+}
+
+func (s *Session) cleanup() {
+	s.stdinMutex.Lock()
+	defer s.stdinMutex.Unlock()
+	
+	if s.stdinPipe != nil {
+		s.stdinPipe.Close()
+		s.stdinPipe = nil
+	}
 }
 
 func (s *Session) IsAlive() bool {

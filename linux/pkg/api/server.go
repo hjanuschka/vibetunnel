@@ -178,8 +178,8 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess.UpdateStatus()
-
+	// Return current session info without blocking on status update
+	// Status will be eventually consistent through background updates
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(sess)
 }
