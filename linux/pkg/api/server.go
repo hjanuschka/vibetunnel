@@ -119,29 +119,23 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name          string   `json:"name"`
-		Cmdline       []string `json:"cmdline"`
-		Command       []string `json:"command"`       // Alternative field name
-		Cwd           string   `json:"cwd"`
-		WorkingDir    string   `json:"workingDir"`    // Alternative field name
-		SpawnTerminal bool     `json:"spawn_terminal"` // Frontend compatibility
+		Name       string   `json:"name"`
+		Command    []string `json:"command"`    // Rust API format
+		WorkingDir string   `json:"workingDir"` // Rust API format
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Invalid request body. Expected JSON with 'command' array and optional 'workingDir'", http.StatusBadRequest)
 		return
 	}
 
-	// Handle alternative field names for compatibility
-	cmdline := req.Cmdline
-	if len(cmdline) == 0 && len(req.Command) > 0 {
-		cmdline = req.Command
+	if len(req.Command) == 0 {
+		http.Error(w, "Command array is required", http.StatusBadRequest)
+		return
 	}
 
-	cwd := req.Cwd
-	if cwd == "" && req.WorkingDir != "" {
-		cwd = req.WorkingDir
-	}
+	cmdline := req.Command
+	cwd := req.WorkingDir
 
 	// Expand ~ in working directory
 	if cwd != "" && cwd[0] == '~' {
