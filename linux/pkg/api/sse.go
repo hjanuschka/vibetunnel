@@ -60,8 +60,11 @@ func (s *SSEStreamer) Stream() {
 	headerSent := false
 	seenBytes := int64(0)
 	
-	// Send initial content immediately
-	s.processNewContent(streamPath, &headerSent, &seenBytes)
+	// Send initial content immediately and check for client disconnect
+	if err := s.processNewContent(streamPath, &headerSent, &seenBytes); err != nil {
+		log.Printf("[DEBUG] SSE: Client disconnected during initial content: %v", err)
+		return
+	}
 	
 	// Watch for file changes
 	for {
@@ -71,9 +74,12 @@ func (s *SSEStreamer) Stream() {
 				return
 			}
 			
-			// Process file writes (new content)
+			// Process file writes (new content) and check for client disconnect
 			if event.Op&fsnotify.Write == fsnotify.Write {
-				s.processNewContent(streamPath, &headerSent, &seenBytes)
+				if err := s.processNewContent(streamPath, &headerSent, &seenBytes); err != nil {
+					log.Printf("[DEBUG] SSE: Client disconnected during content streaming: %v", err)
+					return
+				}
 			}
 			
 		case err, ok := <-watcher.Errors:
@@ -86,19 +92,21 @@ func (s *SSEStreamer) Stream() {
 			// Check if session is still alive periodically
 			if !s.session.IsAlive() {
 				log.Printf("[DEBUG] SSE: Session %s is dead, ending stream", s.session.ID[:8])
-				s.sendEvent(&protocol.StreamEvent{Type: "end"})
+				if err := s.sendEvent(&protocol.StreamEvent{Type: "end"}); err != nil {
+					log.Printf("[DEBUG] SSE: Client disconnected during end event: %v", err)
+				}
 				return
 			}
 		}
 	}
 }
 
-func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, seenBytes *int64) {
+func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, seenBytes *int64) error {
 	// Open the file for reading
 	file, err := os.Open(streamPath)
 	if err != nil {
 		log.Printf("[ERROR] SSE: Failed to open stream file: %v", err)
-		return
+		return err
 	}
 	defer file.Close()
 	
@@ -106,20 +114,20 @@ func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, see
 	fileInfo, err := file.Stat()
 	if err != nil {
 		log.Printf("[ERROR] SSE: Failed to stat stream file: %v", err)
-		return
+		return err
 	}
 	
 	currentSize := fileInfo.Size()
 	
 	// If file hasn't grown, nothing to do
 	if currentSize <= *seenBytes {
-		return
+		return nil
 	}
 	
 	// Seek to the position we last read
 	if _, err := file.Seek(*seenBytes, 0); err != nil {
 		log.Printf("[ERROR] SSE: Failed to seek to position %d: %v", *seenBytes, err)
-		return
+		return err
 	}
 	
 	// Read only the new content
@@ -129,7 +137,7 @@ func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, see
 	bytesRead, err := file.Read(newContent)
 	if err != nil {
 		log.Printf("[ERROR] SSE: Failed to read new content: %v", err)
-		return
+		return err
 	}
 	
 	// Update seen bytes
@@ -187,11 +195,12 @@ func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, see
 				log.Printf("[DEBUG] SSE: Sending event type=%s", event.Type)
 				if err := s.sendRawEvent(event); err != nil {
 					log.Printf("[ERROR] SSE: Failed to send event: %v", err)
-					return
+					return err
 				}
 			}
 		}
 	}
+	return nil
 }
 
 func (s *SSEStreamer) sendEvent(event *protocol.StreamEvent) error {
@@ -202,9 +211,13 @@ func (s *SSEStreamer) sendEvent(event *protocol.StreamEvent) error {
 
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
-		fmt.Fprintf(s.w, "data: %s\n", line)
+		if _, err := fmt.Fprintf(s.w, "data: %s\n", line); err != nil {
+			return err // Client disconnected
+		}
 	}
-	fmt.Fprintf(s.w, "\n")
+	if _, err := fmt.Fprintf(s.w, "\n"); err != nil {
+		return err // Client disconnected
+	}
 
 	if s.flusher != nil {
 		s.flusher.Flush()
@@ -239,9 +252,13 @@ func (s *SSEStreamer) sendRawEvent(event *protocol.StreamEvent) error {
 
 	lines := strings.Split(string(jsonData), "\n")
 	for _, line := range lines {
-		fmt.Fprintf(s.w, "data: %s\n", line)
+		if _, err := fmt.Fprintf(s.w, "data: %s\n", line); err != nil {
+			return err // Client disconnected
+		}
 	}
-	fmt.Fprintf(s.w, "\n")
+	if _, err := fmt.Fprintf(s.w, "\n"); err != nil {
+		return err // Client disconnected
+	}
 
 	if s.flusher != nil {
 		s.flusher.Flush()
@@ -250,12 +267,12 @@ func (s *SSEStreamer) sendRawEvent(event *protocol.StreamEvent) error {
 	return nil
 }
 
-func (s *SSEStreamer) sendError(message string) {
+func (s *SSEStreamer) sendError(message string) error {
 	event := &protocol.StreamEvent{
 		Type:    "error",
 		Message: message,
 	}
-	s.sendEvent(event)
+	return s.sendEvent(event)
 }
 
 type SessionSnapshot struct {

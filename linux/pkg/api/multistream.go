@@ -111,7 +111,9 @@ func (m *MultiSSEStreamer) sendEvent(sessionID string, event *protocol.StreamEve
 		return err
 	}
 
-	fmt.Fprintf(m.w, "data: %s\n\n", jsonData)
+	if _, err := fmt.Fprintf(m.w, "data: %s\n\n", jsonData); err != nil {
+		return err // Client disconnected
+	}
 
 	if m.flusher != nil {
 		m.flusher.Flush()
@@ -120,10 +122,10 @@ func (m *MultiSSEStreamer) sendEvent(sessionID string, event *protocol.StreamEve
 	return nil
 }
 
-func (m *MultiSSEStreamer) sendError(sessionID string, message string) {
+func (m *MultiSSEStreamer) sendError(sessionID string, message string) error {
 	event := &protocol.StreamEvent{
 		Type:    "error",
 		Message: message,
 	}
-	m.sendEvent(sessionID, event)
+	return m.sendEvent(sessionID, event)
 }
