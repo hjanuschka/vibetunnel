@@ -168,7 +168,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"sessionId": sess.ID})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"message":   "Session created successfully",
+		"error":     nil,
+		"sessionId": sess.ID,
+	})
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
