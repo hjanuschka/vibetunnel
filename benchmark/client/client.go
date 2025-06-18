@@ -19,13 +19,16 @@ type VibeTunnelClient struct {
 
 // SessionConfig represents session creation parameters
 type SessionConfig struct {
-	Name    string            `json:"name"`
-	Args    []string          `json:"args"`
-	Cwd     string            `json:"cwd"`
-	Width   int               `json:"width"`
-	Height  int               `json:"height"`
-	Term    string            `json:"term"`
-	Env     map[string]string `json:"env"`
+	Name       string            `json:"name"`
+	Args       []string          `json:"args"`
+	Cmdline    []string          `json:"cmdline"`    // Go server compatibility
+	Command    []string          `json:"command"`    // Rust server compatibility
+	Cwd        string            `json:"cwd"`
+	WorkingDir string            `json:"workingDir"` // Rust server compatibility
+	Width      int               `json:"width"`
+	Height     int               `json:"height"`
+	Term       string            `json:"term"`
+	Env        map[string]string `json:"env"`
 }
 
 // SessionInfo represents session metadata
