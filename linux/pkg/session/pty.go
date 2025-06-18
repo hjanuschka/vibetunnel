@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ type PTY struct {
 	oldState *term.State
 	streamWriter *protocol.StreamWriter
 	stdinPipe *os.File
+	resizeMutex sync.Mutex
 }
 
 func NewPTY(session *Session) (*PTY, error) {
@@ -196,25 +198,32 @@ func (p *PTY) Run() error {
 				log.Printf("[DEBUG] PTY.Run: Read %d bytes from stdin, writing to PTY", n)
 				if _, err := p.pty.Write(buf[:n]); err != nil {
 					log.Printf("[ERROR] PTY.Run: Failed to write to PTY: %v", err)
-					errCh <- fmt.Errorf("failed to write to PTY: %w", err)
-					return
+					// Only exit if the PTY is really broken, not on temporary errors
+					if err != syscall.EPIPE && err != syscall.ECONNRESET {
+						errCh <- fmt.Errorf("failed to write to PTY: %w", err)
+						return
+					}
+					// For broken pipe, just continue - the PTY might be closing
+					log.Printf("[DEBUG] PTY.Run: PTY write failed with pipe error, continuing...")
+					time.Sleep(10 * time.Millisecond)
 				}
 				// Continue immediately after successful write
 				continue
 			}
-			if err == syscall.EAGAIN {
+			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
 				// No data available, brief pause to prevent CPU spinning
 				time.Sleep(100 * time.Microsecond)
 				continue
 			}
-			if err != nil && err != io.EOF {
-				log.Printf("[ERROR] PTY.Run: STDIN GOROUTINE sending error to errCh: %v", err)
-				errCh <- fmt.Errorf("stdin read error: %w", err)
-				return
-			}
 			if err == io.EOF {
 				// No writers to the FIFO yet, brief pause before retry
-				time.Sleep(500 * time.Microsecond) // Reduced from 1ms to balance responsiveness and CPU
+				time.Sleep(500 * time.Microsecond)
+				continue
+			}
+			if err != nil {
+				// Log other errors but don't crash the session - stdin issues shouldn't kill the PTY
+				log.Printf("[WARN] PTY.Run: Stdin read error (non-fatal): %v", err)
+				time.Sleep(1 * time.Millisecond)
 				continue
 			}
 		}
@@ -308,6 +317,39 @@ func (p *PTY) updateSize() error {
 		Rows: uint16(height),
 		Cols: uint16(width),
 	})
+}
+
+func (p *PTY) Resize(width, height int) error {
+	if p.pty == nil {
+		return fmt.Errorf("PTY not initialized")
+	}
+
+	p.resizeMutex.Lock()
+	defer p.resizeMutex.Unlock()
+
+	log.Printf("[DEBUG] PTY.Resize: Resizing PTY to %dx%d for session %s", width, height, p.session.ID[:8])
+	
+	// Resize the actual PTY
+	err := pty.Setsize(p.pty, &pty.Winsize{
+		Rows: uint16(height),
+		Cols: uint16(width),
+	})
+	
+	if err != nil {
+		log.Printf("[ERROR] PTY.Resize: Failed to resize PTY: %v", err)
+		return fmt.Errorf("failed to resize PTY: %w", err)
+	}
+	
+	// Write resize event to stream if streamWriter is available
+	if p.streamWriter != nil {
+		if err := p.streamWriter.WriteResize(uint32(width), uint32(height)); err != nil {
+			log.Printf("[ERROR] PTY.Resize: Failed to write resize event: %v", err)
+			// Don't fail the resize operation if we can't write the event
+		}
+	}
+	
+	log.Printf("[DEBUG] PTY.Resize: Successfully resized PTY to %dx%d", width, height)
+	return nil
 }
 
 func (p *PTY) Close() error {

@@ -465,12 +465,29 @@ export class SessionView extends LitElement {
     }
   }
 
-  private handleTerminalResize(event: CustomEvent) {
+  private async handleTerminalResize(event: CustomEvent) {
     // Update terminal dimensions for display
     const { cols, rows } = event.detail;
     this.terminalCols = cols;
     this.terminalRows = rows;
     this.requestUpdate();
+
+    // Send resize request to backend if session is active
+    if (this.session && this.session.status !== 'exited') {
+      try {
+        const response = await fetch(`/api/sessions/${this.session.id}/resize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ width: cols, height: rows }),
+        });
+
+        if (!response.ok) {
+          console.warn(`Failed to resize session: ${response.status}`);
+        }
+      } catch (error) {
+        console.warn('Failed to send resize request:', error);
+      }
+    }
   }
 
   // Mobile input methods

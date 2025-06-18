@@ -268,6 +268,14 @@ export class Terminal extends LitElement {
       // Resize the terminal to the new dimensions
       if (this.terminal) {
         this.terminal.resize(this.cols, this.rows);
+        
+        // Dispatch resize event for backend synchronization
+        this.dispatchEvent(
+          new CustomEvent('terminal-resize', {
+            detail: { cols: this.cols, rows: this.rows },
+            bubbles: true,
+          })
+        );
       }
     } else {
       // Normal mode: just calculate how many rows fit in the viewport

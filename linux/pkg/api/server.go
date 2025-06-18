@@ -54,6 +54,7 @@ func (s *Server) createHandler() http.Handler {
 	api.HandleFunc("/sessions/{id}/input", s.handleSendInput).Methods("POST")
 	api.HandleFunc("/sessions/{id}", s.handleKillSession).Methods("DELETE")
 	api.HandleFunc("/sessions/{id}/cleanup", s.handleCleanupSession).Methods("DELETE")
+	api.HandleFunc("/sessions/{id}/resize", s.handleResizeSession).Methods("POST")
 	api.HandleFunc("/sessions/multistream", s.handleMultistream).Methods("GET")
 	api.HandleFunc("/cleanup-exited", s.handleCleanupExited).Methods("POST")
 	api.HandleFunc("/fs/browse", s.handleBrowseFS).Methods("GET")
@@ -127,6 +128,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Name       string   `json:"name"`
 		Command    []string `json:"command"`    // Rust API format
 		WorkingDir string   `json:"workingDir"` // Rust API format
+		Width      int      `json:"width"`      // Terminal width
+		Height     int      `json:"height"`     // Terminal height
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -141,6 +144,16 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	cmdline := req.Command
 	cwd := req.WorkingDir
+
+	// Set default terminal dimensions if not provided
+	width := req.Width
+	if width <= 0 {
+		width = 120 // Better default for modern terminals
+	}
+	height := req.Height
+	if height <= 0 {
+		height = 30 // Better default for modern terminals
+	}
 
 	// Expand ~ in working directory
 	if cwd != "" && cwd[0] == '~' {
@@ -160,6 +173,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Name:    req.Name,
 		Cmdline: cmdline,
 		Cwd:     cwd,
+		Width:   width,
+		Height:  height,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -359,6 +374,43 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleResizeSession(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	sess, err := s.manager.GetSession(vars["id"])
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Width <= 0 || req.Height <= 0 {
+		http.Error(w, "Width and height must be positive integers", http.StatusBadRequest)
+		return
+	}
+
+	if err := sess.Resize(req.Width, req.Height); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Session resized successfully",
+		"width":   req.Width,
+		"height":  req.Height,
+	})
 }
 
 // Ngrok Handlers

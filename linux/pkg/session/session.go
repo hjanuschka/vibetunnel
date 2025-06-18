@@ -27,6 +27,8 @@ type Config struct {
 	Cmdline []string
 	Cwd     string
 	Env     []string
+	Width   int
+	Height  int
 }
 
 type Info struct {
@@ -98,6 +100,16 @@ func newSession(controlPath string, config Config) (*Session, error) {
 		term = "xterm-256color"
 	}
 
+	// Set default terminal dimensions if not provided
+	width := config.Width
+	if width <= 0 {
+		width = 120 // Better default for modern terminals
+	}
+	height := config.Height
+	if height <= 0 {
+		height = 30 // Better default for modern terminals
+	}
+
 	info := &Info{
 		ID:        id,
 		Name:      config.Name,
@@ -106,8 +118,8 @@ func newSession(controlPath string, config Config) (*Session, error) {
 		Status:    string(StatusStarting),
 		StartedAt: time.Now(),
 		Term:      term,
-		Width:     80,
-		Height:    24,
+		Width:     width,
+		Height:    height,
 		Args:      config.Cmdline,
 	}
 
@@ -130,11 +142,16 @@ func loadSession(controlPath, id string) (*Session, error) {
 		return nil, err
 	}
 
-	return &Session{
+	session := &Session{
 		ID:          id,
 		controlPath: controlPath,
 		info:        info,
-	}, nil
+	}
+
+	// If session is running, we need to reconnect to the PTY for operations like resize
+	// For now, we'll handle this by checking if we need PTY access in individual methods
+	
+	return session, nil
 }
 
 func (s *Session) Path() string {
@@ -259,6 +276,34 @@ func (s *Session) cleanup() {
 		s.stdinPipe.Close()
 		s.stdinPipe = nil
 	}
+}
+
+func (s *Session) Resize(width, height int) error {
+	if s.pty == nil {
+		return fmt.Errorf("session not started")
+	}
+
+	// Check if session is still alive
+	if s.info.Status == string(StatusExited) {
+		return fmt.Errorf("cannot resize exited session")
+	}
+
+	// Validate dimensions
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("invalid dimensions: width=%d, height=%d", width, height)
+	}
+
+	// Update session info
+	s.info.Width = width
+	s.info.Height = height
+	
+	// Save updated session info
+	if err := s.info.Save(s.Path()); err != nil {
+		log.Printf("[ERROR] Failed to save session info after resize: %v", err)
+	}
+
+	// Resize the PTY
+	return s.pty.Resize(width, height)
 }
 
 func (s *Session) IsAlive() bool {

@@ -6,15 +6,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type Manager struct {
-	controlPath string
+	controlPath    string
+	runningSessions map[string]*Session
+	mutex          sync.RWMutex
 }
 
 func NewManager(controlPath string) *Manager {
 	return &Manager{
-		controlPath: controlPath,
+		controlPath:     controlPath,
+		runningSessions: make(map[string]*Session),
 	}
 }
 
@@ -33,10 +37,24 @@ func (m *Manager) CreateSession(config Config) (*Session, error) {
 		return nil, err
 	}
 
+	// Add to running sessions registry
+	m.mutex.Lock()
+	m.runningSessions[session.ID] = session
+	m.mutex.Unlock()
+
 	return session, nil
 }
 
 func (m *Manager) GetSession(id string) (*Session, error) {
+	// First check if we have this session in our running sessions registry
+	m.mutex.RLock()
+	if session, exists := m.runningSessions[id]; exists {
+		m.mutex.RUnlock()
+		return session, nil
+	}
+	m.mutex.RUnlock()
+
+	// Fall back to loading from disk (for sessions that might have been started before this manager instance)
 	return loadSession(m.controlPath, id)
 }
 
@@ -112,6 +130,11 @@ func (m *Manager) CleanupExitedSessions() error {
 }
 
 func (m *Manager) RemoveSession(id string) error {
+	// Remove from running sessions registry
+	m.mutex.Lock()
+	delete(m.runningSessions, id)
+	m.mutex.Unlock()
+
 	sessionPath := filepath.Join(m.controlPath, id)
 	return os.RemoveAll(sessionPath)
 }
