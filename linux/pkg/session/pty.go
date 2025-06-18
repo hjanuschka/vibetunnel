@@ -176,7 +176,7 @@ func (p *PTY) Run() error {
 					// Check if process is still alive before deciding what to do
 					if p.cmd.ProcessState == nil || !p.cmd.ProcessState.Exited() {
 						log.Printf("[DEBUG] PTY.Run: Process still running, continuing to read...")
-						time.Sleep(100 * time.Millisecond)
+						time.Sleep(1 * time.Millisecond)
 						continue
 					} else {
 						log.Printf("[DEBUG] PTY.Run: Process has exited, stopping output reading")
@@ -190,7 +190,7 @@ func (p *PTY) Run() error {
 			}
 			// If we get here, n == 0 and err == nil, which shouldn't happen with blocking reads
 			log.Printf("[DEBUG] PTY.Run: Got 0 bytes with no error, continuing...")
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(1 * time.Millisecond)
 		}
 	}()
 
@@ -209,7 +209,7 @@ func (p *PTY) Run() error {
 			}
 			if err == syscall.EAGAIN {
 				// No data available, sleep briefly and try again
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(1 * time.Millisecond)
 				continue
 			}
 			if err != nil && err != io.EOF {
@@ -219,7 +219,7 @@ func (p *PTY) Run() error {
 			}
 			if err == io.EOF {
 				// No writers to the FIFO yet, sleep longer and continue polling
-				time.Sleep(1 * time.Second)
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 		}

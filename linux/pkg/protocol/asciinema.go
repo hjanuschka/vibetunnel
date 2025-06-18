@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 )
@@ -41,12 +42,14 @@ type StreamEvent struct {
 }
 
 type StreamWriter struct {
-	writer    io.Writer
-	header    *AsciinemaHeader
-	startTime time.Time
-	mutex     sync.Mutex
-	closed    bool
-	buffer    []byte
+	writer        io.Writer
+	header        *AsciinemaHeader
+	startTime     time.Time
+	mutex         sync.Mutex
+	closed        bool
+	buffer        []byte
+	lastWrite     time.Time
+	flushTimer    *time.Timer
 }
 
 func NewStreamWriter(writer io.Writer, header *AsciinemaHeader) *StreamWriter {
@@ -55,6 +58,7 @@ func NewStreamWriter(writer io.Writer, header *AsciinemaHeader) *StreamWriter {
 		header:    header,
 		startTime: time.Now(),
 		buffer:    make([]byte, 0, 4096),
+		lastWrite: time.Now(),
 	}
 }
 
@@ -101,11 +105,16 @@ func (w *StreamWriter) writeEvent(eventType EventType, data []byte) error {
 	}
 
 	w.buffer = append(w.buffer, data...)
+	w.lastWrite = time.Now()
 
 	completeData, remaining := extractCompleteUTF8(w.buffer)
 	w.buffer = remaining
 
 	if len(completeData) == 0 {
+		// If we have incomplete UTF-8 data, set up a timer to flush it after a short delay
+		if len(w.buffer) > 0 {
+			w.scheduleFlush()
+		}
 		return nil
 	}
 
@@ -118,7 +127,53 @@ func (w *StreamWriter) writeEvent(eventType EventType, data []byte) error {
 	}
 
 	_, err = fmt.Fprintf(w.writer, "%s\n", eventData)
-	return err
+	if err != nil {
+		return err
+	}
+	
+	// Sync file to ensure immediate fsnotify trigger
+	if file, ok := w.writer.(*os.File); ok {
+		file.Sync()
+	}
+	
+	return nil
+}
+
+// scheduleFlush sets up a timer to flush incomplete UTF-8 data after a short delay
+func (w *StreamWriter) scheduleFlush() {
+	// Cancel existing timer if any
+	if w.flushTimer != nil {
+		w.flushTimer.Stop()
+	}
+	
+	// Set up new timer for 5ms flush delay
+	w.flushTimer = time.AfterFunc(5*time.Millisecond, func() {
+		w.mutex.Lock()
+		defer w.mutex.Unlock()
+		
+		if w.closed || len(w.buffer) == 0 {
+			return
+		}
+		
+		// Force flush incomplete UTF-8 data for real-time streaming
+		elapsed := time.Since(w.startTime).Seconds()
+		event := []interface{}{elapsed, string(EventOutput), string(w.buffer)}
+		
+		eventData, err := json.Marshal(event)
+		if err != nil {
+			return
+		}
+		
+		fmt.Fprintf(w.writer, "%s\n", eventData)
+		
+		// Sync file to ensure immediate fsnotify trigger
+		if file, ok := w.writer.(*os.File); ok {
+			file.Sync()
+		}
+		
+		// Clear buffer after flushing
+		w.buffer = w.buffer[:0]
+	})
 }
 
 func (w *StreamWriter) Close() error {
@@ -127,6 +182,11 @@ func (w *StreamWriter) Close() error {
 
 	if w.closed {
 		return nil
+	}
+	
+	// Cancel flush timer
+	if w.flushTimer != nil {
+		w.flushTimer.Stop()
 	}
 
 	if len(w.buffer) > 0 {
