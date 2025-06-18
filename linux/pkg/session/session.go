@@ -1,0 +1,294 @@
+package session
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type Status string
+
+const (
+	StatusStarting Status = "starting"
+	StatusRunning  Status = "running"
+	StatusExited   Status = "exited"
+)
+
+type Config struct {
+	Name    string
+	Cmdline []string
+	Cwd     string
+	Env     []string
+}
+
+type Info struct {
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Cmdline   string            `json:"cmdline"`
+	Cwd       string            `json:"cwd"`
+	Pid       int               `json:"pid,omitempty"`
+	Status    string            `json:"status"`
+	ExitCode  *int              `json:"exit_code,omitempty"`
+	StartedAt time.Time         `json:"started_at"`
+	Term      string            `json:"term"`
+	Width     int               `json:"width"`
+	Height    int               `json:"height"`
+	Env       map[string]string `json:"env,omitempty"`
+	Args      []string          `json:"-"` // Internal use only
+}
+
+type Session struct {
+	ID          string
+	controlPath string
+	info        *Info
+	pty         *PTY
+}
+
+func newSession(controlPath string, config Config) (*Session, error) {
+	id := uuid.New().String()
+	sessionPath := filepath.Join(controlPath, id)
+
+	log.Printf("[DEBUG] Creating new session %s with config: Name=%s, Cmdline=%v, Cwd=%s", 
+		id[:8], config.Name, config.Cmdline, config.Cwd)
+
+	if err := os.MkdirAll(sessionPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create session directory: %w", err)
+	}
+
+	if config.Name == "" {
+		config.Name = id[:8]
+	}
+
+	// Set default command if empty
+	if len(config.Cmdline) == 0 {
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/bash"
+		}
+		config.Cmdline = []string{shell}
+		log.Printf("[DEBUG] Session %s: Set default command to %v", id[:8], config.Cmdline)
+	}
+
+	// Set default working directory if empty
+	if config.Cwd == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			config.Cwd = os.Getenv("HOME")
+			if config.Cwd == "" {
+				config.Cwd = "/"
+			}
+		} else {
+			config.Cwd = cwd
+		}
+		log.Printf("[DEBUG] Session %s: Set default working directory to %s", id[:8], config.Cwd)
+	}
+
+	term := os.Getenv("TERM")
+	if term == "" {
+		term = "xterm-256color"
+	}
+
+	info := &Info{
+		ID:        id,
+		Name:      config.Name,
+		Cmdline:   strings.Join(config.Cmdline, " "),
+		Cwd:       config.Cwd,
+		Status:    string(StatusStarting),
+		StartedAt: time.Now(),
+		Term:      term,
+		Width:     80,
+		Height:    24,
+		Args:      config.Cmdline,
+	}
+
+	if err := info.Save(sessionPath); err != nil {
+		os.RemoveAll(sessionPath)
+		return nil, fmt.Errorf("failed to save session info: %w", err)
+	}
+
+	return &Session{
+		ID:          id,
+		controlPath: controlPath,
+		info:        info,
+	}, nil
+}
+
+func loadSession(controlPath, id string) (*Session, error) {
+	sessionPath := filepath.Join(controlPath, id)
+	info, err := LoadInfo(sessionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Session{
+		ID:          id,
+		controlPath: controlPath,
+		info:        info,
+	}, nil
+}
+
+func (s *Session) Path() string {
+	return filepath.Join(s.controlPath, s.ID)
+}
+
+func (s *Session) StreamOutPath() string {
+	return filepath.Join(s.Path(), "stream-out")
+}
+
+func (s *Session) StdinPath() string {
+	return filepath.Join(s.Path(), "stdin")
+}
+
+func (s *Session) NotificationPath() string {
+	return filepath.Join(s.Path(), "notification-stream")
+}
+
+func (s *Session) Start() error {
+	pty, err := NewPTY(s)
+	if err != nil {
+		return fmt.Errorf("failed to create PTY: %w", err)
+	}
+
+	s.pty = pty
+	s.info.Status = string(StatusRunning)
+	s.info.Pid = pty.Pid()
+
+	if err := s.info.Save(s.Path()); err != nil {
+		pty.Close()
+		return fmt.Errorf("failed to update session info: %w", err)
+	}
+
+	go func() {
+		if err := s.pty.Run(); err != nil {
+			log.Printf("[DEBUG] Session %s: PTY.Run() exited with error: %v", s.ID[:8], err)
+		} else {
+			log.Printf("[DEBUG] Session %s: PTY.Run() exited normally", s.ID[:8])
+		}
+	}()
+	
+	// Give the process a moment to start, then verify it's running
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		if s.IsAlive() {
+			log.Printf("[DEBUG] Session %s: Process confirmed alive after 100ms", s.ID[:8])
+		} else {
+			log.Printf("[DEBUG] Session %s: Process appears dead after 100ms", s.ID[:8])
+		}
+	}()
+	
+	return nil
+}
+
+func (s *Session) Attach() error {
+	if s.pty == nil {
+		return fmt.Errorf("session not started")
+	}
+	return s.pty.Attach()
+}
+
+func (s *Session) SendKey(key string) error {
+	return s.sendInput([]byte(key))
+}
+
+func (s *Session) SendText(text string) error {
+	return s.sendInput([]byte(text))
+}
+
+func (s *Session) sendInput(data []byte) error {
+	stdinPath := s.StdinPath()
+	pipe, err := os.OpenFile(stdinPath, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open stdin pipe: %w", err)
+	}
+	defer pipe.Close()
+
+	_, err = pipe.Write(data)
+	return err
+}
+
+func (s *Session) Signal(sig string) error {
+	if s.info.Pid == 0 {
+		return fmt.Errorf("no process to signal")
+	}
+
+	proc, err := os.FindProcess(s.info.Pid)
+	if err != nil {
+		return err
+	}
+
+	switch sig {
+	case "SIGTERM":
+		return proc.Signal(os.Interrupt)
+	case "SIGKILL":
+		return proc.Kill()
+	default:
+		return fmt.Errorf("unsupported signal: %s", sig)
+	}
+}
+
+func (s *Session) Stop() error {
+	return s.Signal("SIGTERM")
+}
+
+func (s *Session) Kill() error {
+	return s.Signal("SIGKILL")
+}
+
+func (s *Session) IsAlive() bool {
+	if s.info.Pid == 0 {
+		return false
+	}
+
+	proc, err := os.FindProcess(s.info.Pid)
+	if err != nil {
+		return false
+	}
+
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+func (s *Session) UpdateStatus() error {
+	if s.info.Status == string(StatusExited) {
+		return nil
+	}
+
+	if !s.IsAlive() {
+		s.info.Status = string(StatusExited)
+		exitCode := 0
+		s.info.ExitCode = &exitCode
+		return s.info.Save(s.Path())
+	}
+
+	return nil
+}
+
+func (i *Info) Save(sessionPath string) error {
+	data, err := json.MarshalIndent(i, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(sessionPath, "session.json"), data, 0644)
+}
+
+func LoadInfo(sessionPath string) (*Info, error) {
+	data, err := os.ReadFile(filepath.Join(sessionPath, "session.json"))
+	if err != nil {
+		return nil, err
+	}
+
+	var info Info
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, err
+	}
+
+	return &info, nil
+}
