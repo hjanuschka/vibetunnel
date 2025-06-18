@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,10 +58,10 @@ func (s *SSEStreamer) Stream() {
 	}
 	
 	headerSent := false
-	lastLineCount := 0
+	seenBytes := int64(0)
 	
 	// Send initial content immediately
-	s.processNewContent(streamPath, &headerSent, &lastLineCount)
+	s.processNewContent(streamPath, &headerSent, &seenBytes)
 	
 	// Watch for file changes
 	for {
@@ -74,7 +73,7 @@ func (s *SSEStreamer) Stream() {
 			
 			// Process file writes (new content)
 			if event.Op&fsnotify.Write == fsnotify.Write {
-				s.processNewContent(streamPath, &headerSent, &lastLineCount)
+				s.processNewContent(streamPath, &headerSent, &seenBytes)
 			}
 			
 		case err, ok := <-watcher.Errors:
@@ -94,8 +93,8 @@ func (s *SSEStreamer) Stream() {
 	}
 }
 
-func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, lastLineCount *int) {
-	// Read all lines from the file
+func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, seenBytes *int64) {
+	// Open the file for reading
 	file, err := os.Open(streamPath)
 	if err != nil {
 		log.Printf("[ERROR] SSE: Failed to open stream file: %v", err)
@@ -103,28 +102,56 @@ func (s *SSEStreamer) processNewContent(streamPath string, headerSent *bool, las
 	}
 	defer file.Close()
 	
-	// Read all lines to count total lines
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	
-	if err := scanner.Err(); err != nil {
-		log.Printf("[ERROR] SSE: Error reading stream file: %v", err)
+	// Get current file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		log.Printf("[ERROR] SSE: Failed to stat stream file: %v", err)
 		return
 	}
 	
-	// If no new lines, return
-	if len(lines) <= *lastLineCount {
+	currentSize := fileInfo.Size()
+	
+	// If file hasn't grown, nothing to do
+	if currentSize <= *seenBytes {
 		return
 	}
 	
-	// Process new lines
-	newLines := lines[*lastLineCount:]
-	*lastLineCount = len(lines)
+	// Seek to the position we last read
+	if _, err := file.Seek(*seenBytes, 0); err != nil {
+		log.Printf("[ERROR] SSE: Failed to seek to position %d: %v", *seenBytes, err)
+		return
+	}
 	
-	for _, line := range newLines {
+	// Read only the new content
+	newContentSize := currentSize - *seenBytes
+	newContent := make([]byte, newContentSize)
+	
+	bytesRead, err := file.Read(newContent)
+	if err != nil {
+		log.Printf("[ERROR] SSE: Failed to read new content: %v", err)
+		return
+	}
+	
+	// Update seen bytes
+	*seenBytes = currentSize
+	
+	// Process the new content line by line
+	content := string(newContent[:bytesRead])
+	lines := strings.Split(content, "\n")
+	
+	// Handle the case where the last line might be incomplete
+	// If the content doesn't end with a newline, don't process the last line yet
+	endIndex := len(lines)
+	if !strings.HasSuffix(content, "\n") && len(lines) > 0 {
+		// Move back the file position to exclude the incomplete line
+		incompleteLineBytes := int64(len(lines[len(lines)-1]))
+		*seenBytes -= incompleteLineBytes
+		endIndex = len(lines) - 1
+	}
+	
+	// Process complete lines
+	for i := 0; i < endIndex; i++ {
+		line := lines[i]
 		if line == "" {
 			continue
 		}
