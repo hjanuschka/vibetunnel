@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/vibetunnel/linux/pkg/api"
@@ -241,16 +242,31 @@ func startServer(cfg *config.Config, manager *session.Manager) error {
 	// Determine bind address
 	bindAddress := determineBind(cfg)
 	
+	// Convert port to int
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		return fmt.Errorf("invalid port: %w", err)
+	}
+	
 	// Create and configure server
-	server := api.NewServer(manager, staticPath, serverPassword)
+	server := api.NewServer(manager, staticPath, serverPassword, portInt)
 	
 	// Configure ngrok if enabled
 	var ngrokURL string
 	if cfg.Ngrok.Enabled || ngrokEnabled {
-		var err error
-		ngrokURL, err = startNgrok(cfg, port)
-		if err != nil {
-			fmt.Printf("Warning: ngrok failed to start: %v\n", err)
+		authToken := ngrokToken
+		if authToken == "" && cfg.Ngrok.AuthToken != "" {
+			authToken = cfg.Ngrok.AuthToken
+		}
+		if authToken != "" {
+			// Start ngrok through the server's service
+			if err := server.StartNgrok(authToken); err != nil {
+				fmt.Printf("Warning: ngrok failed to start: %v\n", err)
+			} else {
+				fmt.Printf("Ngrok tunnel starting...\n")
+			}
+		} else {
+			fmt.Printf("Warning: ngrok enabled but no auth token provided\n")
 		}
 	}
 
@@ -295,12 +311,6 @@ func determineBind(cfg *config.Config) string {
 	}
 }
 
-func startNgrok(cfg *config.Config, port string) (string, error) {
-	// This is a placeholder for ngrok integration
-	// Would implement actual ngrok service similar to VibeTunnel's NgrokService.swift
-	fmt.Printf("ngrok integration not yet implemented\n")
-	return "", nil
-}
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {

@@ -10,20 +10,25 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/vibetunnel/linux/pkg/ngrok"
 	"github.com/vibetunnel/linux/pkg/session"
 )
 
 type Server struct {
-	manager    *session.Manager
-	staticPath string
-	password   string
+	manager      *session.Manager
+	staticPath   string
+	password     string
+	ngrokService *ngrok.Service
+	port         int
 }
 
-func NewServer(manager *session.Manager, staticPath, password string) *Server {
+func NewServer(manager *session.Manager, staticPath, password string, port int) *Server {
 	return &Server{
-		manager:    manager,
-		staticPath: staticPath,
-		password:   password,
+		manager:      manager,
+		staticPath:   staticPath,
+		password:     password,
+		ngrokService: ngrok.NewService(),
+		port:         port,
 	}
 }
 
@@ -48,6 +53,11 @@ func (s *Server) Start(addr string) error {
 	api.HandleFunc("/cleanup-exited", s.handleCleanupExited).Methods("POST")
 	api.HandleFunc("/fs/browse", s.handleBrowseFS).Methods("GET")
 	api.HandleFunc("/mkdir", s.handleMkdir).Methods("POST")
+	
+	// Ngrok endpoints
+	api.HandleFunc("/ngrok/start", s.handleNgrokStart).Methods("POST")
+	api.HandleFunc("/ngrok/stop", s.handleNgrokStop).Methods("POST")
+	api.HandleFunc("/ngrok/status", s.handleNgrokStatus).Methods("GET")
 
 	if s.staticPath != "" {
 		r.PathPrefix("/").Handler(http.FileServer(http.Dir(s.staticPath)))
@@ -341,4 +351,90 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Ngrok Handlers
+
+func (s *Server) handleNgrokStart(w http.ResponseWriter, r *http.Request) {
+	var req ngrok.StartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.AuthToken == "" {
+		http.Error(w, "Auth token is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if ngrok is already running
+	if s.ngrokService.IsRunning() {
+		status := s.ngrokService.GetStatus()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Ngrok tunnel is already running",
+			"tunnel":  status,
+		})
+		return
+	}
+
+	// Start the tunnel
+	if err := s.ngrokService.Start(req.AuthToken, s.port); err != nil {
+		log.Printf("[ERROR] Failed to start ngrok tunnel: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return immediate response - tunnel status will be updated asynchronously
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Ngrok tunnel is starting",
+		"tunnel":  s.ngrokService.GetStatus(),
+	})
+}
+
+func (s *Server) handleNgrokStop(w http.ResponseWriter, r *http.Request) {
+	if !s.ngrokService.IsRunning() {
+		http.Error(w, "Ngrok tunnel is not running", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.ngrokService.Stop(); err != nil {
+		log.Printf("[ERROR] Failed to stop ngrok tunnel: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Ngrok tunnel stopped",
+	})
+}
+
+func (s *Server) handleNgrokStatus(w http.ResponseWriter, r *http.Request) {
+	status := s.ngrokService.GetStatus()
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"tunnel":  status,
+	})
+}
+
+// StartNgrok is a convenience method for CLI integration
+func (s *Server) StartNgrok(authToken string) error {
+	return s.ngrokService.Start(authToken, s.port)
+}
+
+// StopNgrok is a convenience method for CLI integration
+func (s *Server) StopNgrok() error {
+	return s.ngrokService.Stop()
+}
+
+// GetNgrokStatus returns the current ngrok status
+func (s *Server) GetNgrokStatus() ngrok.StatusResponse {
+	return s.ngrokService.GetStatus()
 }
